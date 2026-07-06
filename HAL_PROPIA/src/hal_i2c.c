@@ -75,6 +75,7 @@ void hal_i2c_write(const uint8_t * data, size_t length){
         i2c_master_transmit(oled_handle, data, length, -1);
     }
 }
+
 /* === Public function implementation ========================================================== */
 
 /* === End of documentation ==================================================================== */

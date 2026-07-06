@@ -36,6 +36,7 @@ SPDX-License-Identifier: MIT
 #include "hal_gpio.h"
 #include "hal_i2c.h"
 #include "hal_adc.h"
+#include "hal_ssd1306.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -83,14 +84,17 @@ void app_main(void){
     hal_adc_init(&sensor_presion);
     hal_adc_init(&tension_ref);
 
-    hal_gpio_init(&led1);
-
     hal_i2c_init(4,15);
-    uint8_t cmd_on[] = {0x00,
-                        0x8D,
-                        0x14,
-                        0xAF};
-    hal_i2c_write(cmd_on, sizeof(cmd_on));
+
+    hal_ssd1306_init();
+
+    hal_gpio_init(&led1);
+    
+    hal_ssd1306_draw_string(0, 0, "Analizador PNI");
+    hal_ssd1306_draw_string(0, 2, "Medicion: 120");
+    hal_ssd1306_draw_string(0, 4, "Estado: OK");
+
+    hal_ssd1306_update();
 
     while(1){
         int presion_mv = hal_adc_read_mv(&sensor_presion);
