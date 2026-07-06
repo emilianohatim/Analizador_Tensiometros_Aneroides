@@ -51,14 +51,48 @@ hal_gpio_t boton_back = { .pin = 23, .direction = HAL_GPIO_DIR_INPUT};
 
 hal_gpio_t oled_reset = { .pin = 16, .direction = HAL_GPIO_DIR_OUTPUT};
 
-hal_gpio_t led1 = { .pin = 19, .direction = HAL_GPIO_DIR_OUTPUT};
-
 hal_adc_t sensor_presion = { .unit = 1, .channel = 0};
 hal_adc_t tension_ref = { .unit = 1, .channel = 1};
 
 /* === Private function definitions =========================================================== */
 
+void inicializar_hardware(void){
+    //Inicialización del reset del OLED
+    hal_gpio_init(&oled_reset);
+
+    hal_gpio_write(&oled_reset, HAL_GPIO_STATE_LOW);
+    vTaskDelay(pdMS_TO_TICKS(50));
+    hal_gpio_write(&oled_reset, HAL_GPIO_STATE_HIGH);
+    vTaskDelay(pdMS_TO_TICKS(50));
+
+    //Inicialización de los botones 
+    hal_gpio_init(&boton_up);
+    hal_gpio_init(&boton_down);
+    hal_gpio_init(&boton_ok);
+    hal_gpio_init(&boton_back);
+
+    //Inicialización del ADC
+    hal_adc_init(&sensor_presion);
+    hal_adc_init(&tension_ref);
+
+    //Inicialización de la comunicación y pantalla 
+    hal_i2c_init(4,15);
+    hal_ssd1306_init();
+}
+
+int Calibrar(hal_adc_t * presion_mv){
+    int offset = 0;
+    for (int i = 0; i < 100; i++){
+        offset = offset + hal_adc_read_mv(presion_mv);
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+    int offsetprom = offset/100;
+    return offsetprom;
+}
+
 /* === Private variable definitions ============================================================ */
+
+int conv_kPa_mmhg = 7.5006375;
 
 /* === Public data type definitions =============================================================*/
 
@@ -68,47 +102,38 @@ hal_adc_t tension_ref = { .unit = 1, .channel = 1};
 
 /* === Public function implementation ========================================================== */
 
-void app_main(void){
-    hal_gpio_init(&boton_up);
-    hal_gpio_init(&boton_down);
-    hal_gpio_init(&boton_ok);
-    hal_gpio_init(&boton_back);
+void app_main(void){    
 
-    hal_gpio_init(&oled_reset);
-
-    hal_gpio_write(&oled_reset, HAL_GPIO_STATE_LOW);
-    vTaskDelay(pdMS_TO_TICKS(50));
-    hal_gpio_write(&oled_reset, HAL_GPIO_STATE_HIGH);
-    vTaskDelay(pdMS_TO_TICKS(50));
-
-    hal_adc_init(&sensor_presion);
-    hal_adc_init(&tension_ref);
-
-    hal_i2c_init(4,15);
-
-    hal_ssd1306_init();
-
-    hal_gpio_init(&led1);
+    inicializar_hardware();
+    int offsetprom = Calibrar(&sensor_presion);
     
-    hal_ssd1306_draw_string(0, 0, "Analizador PNI");
-    hal_ssd1306_draw_string(0, 2, "Medicion: 120");
-    hal_ssd1306_draw_string(0, 4, "Estado: OK");
-
-    hal_ssd1306_update();
-
     while(1){
-        int presion_mv = hal_adc_read_mv(&sensor_presion);
+        //lectura inicial de ambos canales, la lectura del sensor ya esta calibrada 
+        int tension_sensor_cal_mv = hal_adc_read_mv(&sensor_presion) - offsetprom;
         int ref_mv = hal_adc_read_mv(&tension_ref);
 
-        printf("Sensor MPX: %d mV | referencia: %d mV\n", presion_mv, ref_mv);
+        // Pasamos los valores de mV a V 
+        float tension_regulador = (ref_mv * 2.0) / 1000.0;
+        float tension_sensor_cal_v = (tension_sensor_cal_mv * 2.0) / 1000.0;
 
-        hal_gpio_state_t estado = hal_gpio_read(&boton_back);
-        if(estado == HAL_GPIO_STATE_LOW){
-            hal_gpio_write(&led1, HAL_GPIO_STATE_HIGH);
+        // Formula del fabricante: Vout = Vs * (0.018 * P) [V]
+        // Despejando P = (Vout / Vs) / 0.018 [kPa]
+        float presion_kPa = (tension_sensor_cal_v / tension_regulador) / 0.018;
+        float presion_mmHg = presion_kPa * conv_kPa_mmhg;
+        if (presion_mmHg < 0.0){
+            presion_mmHg = 0.0; 
         }
-        else {
-            hal_gpio_write(&led1, HAL_GPIO_STATE_LOW);
-        }
+        printf("Sensor MPX: %d mV | referencia: %d mV\n", tension_sensor_cal_mv, ref_mv);
+        //printf("Sensor MPX: %.0f mmHg\n", presion_mmHg);
+        
+        //Se muestra por pantalla el verdadero valor de la medicion sin el ruido interno del uC
+        char texto_oled[32];
+
+        snprintf(texto_oled, sizeof(texto_oled), "Presion: %.0f mmHg\n", presion_mmHg);
+        hal_ssd1306_clear();
+        hal_ssd1306_draw_string(0, 2, texto_oled);
+        hal_ssd1306_update();
+
         vTaskDelay(pdMS_TO_TICKS(500));
     }
 }
