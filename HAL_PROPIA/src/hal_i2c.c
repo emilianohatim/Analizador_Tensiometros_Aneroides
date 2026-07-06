@@ -25,35 +25,25 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 SPDX-License-Identifier: MIT
 *************************************************************************************************/
 
-/** @file 
- * @brief 
- * 
- */
+/** @file HAL_GPIO.c
+ ** @brief implementacion de la biblioteca para comunicación i2c
+ **/
 
 /* === Headers files inclusions ================================================================ */
 
-#include <stdio.h>
-#include "hal_gpio.h"
 #include "hal_i2c.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
+#include "driver/i2c_master.h"
 
 /* === Macros definitions ====================================================================== */
 
 /* === Private data type definitions ========================================================== */
 
-hal_gpio_t boton_up = { .pin = 17, .direction = HAL_GPIO_DIR_INPUT};
-hal_gpio_t boton_down = { .pin = 5, .direction = HAL_GPIO_DIR_INPUT};
-hal_gpio_t boton_ok = { .pin = 18, .direction = HAL_GPIO_DIR_INPUT};
-hal_gpio_t boton_back = { .pin = 23, .direction = HAL_GPIO_DIR_INPUT};
-
-hal_gpio_t oled_reset = { .pin = 16, .direction = HAL_GPIO_DIR_OUTPUT};
-
-hal_gpio_t led1 = { .pin = 19, .direction = HAL_GPIO_DIR_OUTPUT};
-
 /* === Private function definitions =========================================================== */
 
 /* === Private variable definitions ============================================================ */
+
+static i2c_master_bus_handle_t bus_handle = NULL;
+static i2c_master_dev_handle_t oled_handle = NULL;
 
 /* === Public data type definitions =============================================================*/
 
@@ -61,40 +51,30 @@ hal_gpio_t led1 = { .pin = 19, .direction = HAL_GPIO_DIR_OUTPUT};
 
 /* === Private function definitions ============================================================ */
 
-/* === Public function implementation ========================================================== */
+void hal_i2c_init(uint8_t sda_pin, uint8_t scl_pin){
+    i2c_master_bus_config_t i2c_bus_config = {
+        .clk_source = I2C_CLK_SRC_DEFAULT,
+        .i2c_port = I2C_NUM_0,
+        .scl_io_num = scl_pin,
+        .sda_io_num = sda_pin,
+        .glitch_ignore_cnt = 7,
+        .flags.enable_internal_pullup = true,
+    };
+    i2c_new_master_bus(&i2c_bus_config, &bus_handle);
 
-void app_main(void){
-    hal_gpio_init(&boton_up);
-    hal_gpio_init(&boton_down);
-    hal_gpio_init(&boton_ok);
-    hal_gpio_init(&boton_back);
+    i2c_device_config_t dev_config = {
+        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+        .device_address = 0x3C,
+        .scl_speed_hz = 400000,
+    };
+    i2c_master_bus_add_device(bus_handle, &dev_config, &oled_handle);
+}
 
-    hal_gpio_init(&oled_reset);
-
-    hal_gpio_write(&oled_reset, HAL_GPIO_STATE_LOW);
-    vTaskDelay(pdMS_TO_TICKS(50));
-    hal_gpio_write(&oled_reset, HAL_GPIO_STATE_HIGH);
-    vTaskDelay(pdMS_TO_TICKS(50));
-
-    hal_gpio_init(&led1);
-
-    hal_i2c_init(4,15);
-    uint8_t cmd_on[] = {0x00,
-                        0x8D,
-                        0x14,
-                        0xAF};
-    hal_i2c_write(cmd_on, sizeof(cmd_on));
-
-    while(1){
-    hal_gpio_state_t estado = hal_gpio_read(&boton_back);
-        if(estado == HAL_GPIO_STATE_LOW){
-            hal_gpio_write(&led1, HAL_GPIO_STATE_HIGH);
-        }
-        else {
-            hal_gpio_write(&led1, HAL_GPIO_STATE_LOW);
-        }
-        vTaskDelay(pdMS_TO_TICKS(1000));
+void hal_i2c_write(const uint8_t * data, size_t length){
+    if (oled_handle != NULL){
+        i2c_master_transmit(oled_handle, data, length, -1);
     }
 }
+/* === Public function implementation ========================================================== */
 
 /* === End of documentation ==================================================================== */
