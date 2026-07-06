@@ -25,14 +25,16 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 SPDX-License-Identifier: MIT
 *************************************************************************************************/
 
-/** @file hal_i2c.c
- ** @brief implementacion de la biblioteca para comunicación i2c
+/** @file hal_adc.c
+ ** @brief implementacion de la biblioteca de gestión para el conversor analógico digital
  **/
 
 /* === Headers files inclusions ================================================================ */
 
-#include "hal_i2c.h"
-#include "driver/i2c_master.h"
+#include "hal_adc.h"
+#include "esp_adc/adc_oneshot.h"
+#include "esp_adc/adc_cali.h"
+#include "esp_adc/adc_cali_scheme.h"
 
 /* === Macros definitions ====================================================================== */
 
@@ -42,8 +44,8 @@ SPDX-License-Identifier: MIT
 
 /* === Private variable definitions ============================================================ */
 
-static i2c_master_bus_handle_t bus_handle = NULL;
-static i2c_master_dev_handle_t oled_handle = NULL;
+static adc_oneshot_unit_handle_t adc1_handle = NULL;
+static adc_oneshot_unit_handle_t adc2_handle = NULL;
 
 /* === Public data type definitions =============================================================*/
 
@@ -51,30 +53,52 @@ static i2c_master_dev_handle_t oled_handle = NULL;
 
 /* === Private function definitions ============================================================ */
 
-void hal_i2c_init(uint8_t sda_pin, uint8_t scl_pin){
-    i2c_master_bus_config_t i2c_bus_config = {
-        .clk_source = I2C_CLK_SRC_DEFAULT,
-        .i2c_port = I2C_NUM_0,
-        .scl_io_num = scl_pin,
-        .sda_io_num = sda_pin,
-        .glitch_ignore_cnt = 7,
-        .flags.enable_internal_pullup = true,
-    };
-    i2c_new_master_bus(&i2c_bus_config, &bus_handle);
-
-    i2c_device_config_t dev_config = {
-        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
-        .device_address = 0x3C,
-        .scl_speed_hz = 400000,
-    };
-    i2c_master_bus_add_device(bus_handle, &dev_config, &oled_handle);
-}
-
-void hal_i2c_write(const uint8_t * data, size_t length){
-    if (oled_handle != NULL){
-        i2c_master_transmit(oled_handle, data, length, -1);
-    }
-}
 /* === Public function implementation ========================================================== */
+
+void hal_adc_init(hal_adc_t * adc_config){
+    adc_oneshot_unit_handle_t * current_handle = NULL;
+
+    if (adc_config->unit == 1){
+        current_handle = &adc1_handle;
+    } else {
+        current_handle = &adc2_handle;
+    }
+
+    if (*current_handle == NULL){
+        adc_oneshot_unit_init_cfg_t init_config = {
+            .unit_id = (adc_config->unit == 1) ? ADC_UNIT_1 : ADC_UNIT_2,
+        };
+        adc_oneshot_new_unit(&init_config, current_handle);
+    }
+
+    adc_oneshot_chan_cfg_t config = {
+        .bitwidth = ADC_BITWIDTH_12,
+        .atten = ADC_ATTEN_DB_12,
+    };
+    adc_oneshot_config_channel(*current_handle, adc_config->channel,&config);
+
+    adc_cali_line_fitting_config_t cali_config = {
+        .unit_id = (adc_config->unit == 1) ? ADC_UNIT_1 : ADC_UNIT_2,
+        .atten = ADC_ATTEN_DB_12,
+        .bitwidth = ADC_BITWIDTH_12,
+    };
+    adc_cali_handle_t cali_handle = NULL;
+    adc_cali_create_scheme_line_fitting(&cali_config, &cali_handle);
+    adc_config->call_handle = (void*)cali_handle;
+}
+
+int hal_adc_read_mv(hal_adc_t * adc_config){
+    if (adc_config == NULL || adc_config->call_handle == NULL) return -1;
+
+    adc_oneshot_unit_handle_t handle = (adc_config->unit == 1) ? adc1_handle : adc2_handle;
+    int raw_value = 0;
+    int voltage_mv = 0;
+
+    adc_oneshot_read(handle, adc_config->channel, &raw_value);
+
+    adc_cali_raw_to_voltage((adc_cali_handle_t)adc_config->call_handle, raw_value, &voltage_mv);
+
+    return voltage_mv;
+}
 
 /* === End of documentation ==================================================================== */

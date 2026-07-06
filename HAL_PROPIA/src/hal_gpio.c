@@ -25,7 +25,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 SPDX-License-Identifier: MIT
 *************************************************************************************************/
 
-/** @file HAL_GPIO.c
+/** @file hal_gpio.c
  ** @brief implementacion de la biblioteca para gestion de entradas y salidas digitales
  **/
 

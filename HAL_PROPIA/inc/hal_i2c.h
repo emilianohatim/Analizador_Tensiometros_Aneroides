@@ -28,7 +28,7 @@ SPDX-License-Identifier: MIT
 #ifndef HAL_I2C_H_
 #define HAL_I2C_H_
 
-/** @file GPIO.h
+/** @file hal_i2c.h
  ** @author Emiliano Hatim (emilianohatim01@gmail.com)
  ** @brief Declaraciones de la biblioteca para comunicación i2c
  ** @version 1.0

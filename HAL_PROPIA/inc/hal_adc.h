@@ -25,12 +25,12 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 SPDX-License-Identifier: MIT
 *************************************************************************************************/
 
-#ifndef HAL_GPIO_H_
-#define HAL_GPIO_H_
+#ifndef HAL_ADC_H_
+#define HAL_ADC_H_
 
-/** @file hal_gpio.h
+/** @file hal_adc.h
  ** @author Emiliano Hatim (emilianohatim01@gmail.com)
- ** @brief Declaraciones de la biblioteca para gestion de entradas y salidas digitales
+ ** @brief Declaraciones de la biblioteca para gestion del conversor analógico digital
  ** @version 1.0
  * @date 2026-07
  * @copyright Copyright (c) 2026
@@ -51,32 +51,21 @@ extern "C" {
 
 /* === Public data type declarations =============================================================================== */
 
-typedef enum {
-    HAL_GPIO_DIR_INPUT,
-    HAL_GPIO_DIR_OUTPUT
-} hal_gpio_dir_t;
-
-typedef enum {
-    HAL_GPIO_STATE_LOW = 0,
-    HAL_GPIO_STATE_HIGH = 1
-} hal_gpio_state_t;
-
 typedef struct {
-    uint8_t pin;              /**< Número físico del pin*/
-    hal_gpio_dir_t direction; /**< Entrada o Salida digital */
-} hal_gpio_t;
+    uint8_t unit;       /**< Unidad ADC (1 o 2) */
+    uint8_t channel;    /**< Canal interno del ADC */
+    void * call_handle; /**< Puntero para la calibración */
+} hal_adc_t;
 
 /* === Public variable declarations ================================================================================ */
 
 /* === Public function declarations ================================================================================ */
 
-void hal_gpio_init(hal_gpio_t * gpio);
+void hal_adc_init(hal_adc_t * adc_config);
 
-void hal_gpio_write(hal_gpio_t * gpio, hal_gpio_state_t state);
+int hal_adc_read_raw(hal_adc_t * adc_config);
 
-hal_gpio_state_t hal_gpio_read(hal_gpio_t * gpio);
-
-void hal_gpio_toggle(hal_gpio_t * gpio);
+int hal_adc_read_mv(hal_adc_t * adc_config);
 
 /* === End of conditional blocks =================================================================================== */
 
@@ -84,4 +73,4 @@ void hal_gpio_toggle(hal_gpio_t * gpio);
 }
 #endif
 
-#endif /* HAL_GPIO_H_ */
+#endif /* HAL_ADC_H_ */

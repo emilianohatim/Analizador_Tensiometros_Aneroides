@@ -35,6 +35,7 @@ SPDX-License-Identifier: MIT
 #include <stdio.h>
 #include "hal_gpio.h"
 #include "hal_i2c.h"
+#include "hal_adc.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -50,6 +51,9 @@ hal_gpio_t boton_back = { .pin = 23, .direction = HAL_GPIO_DIR_INPUT};
 hal_gpio_t oled_reset = { .pin = 16, .direction = HAL_GPIO_DIR_OUTPUT};
 
 hal_gpio_t led1 = { .pin = 19, .direction = HAL_GPIO_DIR_OUTPUT};
+
+hal_adc_t sensor_presion = { .unit = 1, .channel = 0};
+hal_adc_t tension_ref = { .unit = 1, .channel = 1};
 
 /* === Private function definitions =========================================================== */
 
@@ -76,6 +80,9 @@ void app_main(void){
     hal_gpio_write(&oled_reset, HAL_GPIO_STATE_HIGH);
     vTaskDelay(pdMS_TO_TICKS(50));
 
+    hal_adc_init(&sensor_presion);
+    hal_adc_init(&tension_ref);
+
     hal_gpio_init(&led1);
 
     hal_i2c_init(4,15);
@@ -86,14 +93,19 @@ void app_main(void){
     hal_i2c_write(cmd_on, sizeof(cmd_on));
 
     while(1){
-    hal_gpio_state_t estado = hal_gpio_read(&boton_back);
+        int presion_mv = hal_adc_read_mv(&sensor_presion);
+        int ref_mv = hal_adc_read_mv(&tension_ref);
+
+        printf("Sensor MPX: %d mV | referencia: %d mV\n", presion_mv, ref_mv);
+
+        hal_gpio_state_t estado = hal_gpio_read(&boton_back);
         if(estado == HAL_GPIO_STATE_LOW){
             hal_gpio_write(&led1, HAL_GPIO_STATE_HIGH);
         }
         else {
             hal_gpio_write(&led1, HAL_GPIO_STATE_LOW);
         }
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        vTaskDelay(pdMS_TO_TICKS(500));
     }
 }
 
