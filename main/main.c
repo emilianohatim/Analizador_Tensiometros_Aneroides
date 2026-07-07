@@ -39,6 +39,7 @@ SPDX-License-Identifier: MIT
 #include "hal_ssd1306.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "esp_timer.h"
 
 /* === Macros definitions ====================================================================== */
 
@@ -53,6 +54,16 @@ hal_gpio_t oled_reset = { .pin = 16, .direction = HAL_GPIO_DIR_OUTPUT};
 
 hal_adc_t sensor_presion = { .unit = 1, .channel = 0};
 hal_adc_t tension_ref = { .unit = 1, .channel = 1};
+
+typedef enum{
+    PANTALLA_MENU,
+    PANTALLA_MEDICION,
+    PANTALLA_VELOCIDAD
+} estado_equipo_t;
+
+estado_equipo_t estado_actual = PANTALLA_MENU;
+int opcion_cursor = 0;                          /**< Selección de opciones */
+const int MAX_OPCIONES = 1;                     /**< Limite del cursor */ 
 
 /* === Private function definitions =========================================================== */
 
@@ -108,33 +119,137 @@ void app_main(void){
     int offsetprom = Calibrar(&sensor_presion);
     
     while(1){
-        //lectura inicial de ambos canales, la lectura del sensor ya esta calibrada 
-        int tension_sensor_cal_mv = hal_adc_read_mv(&sensor_presion) - offsetprom;
-        int ref_mv = hal_adc_read_mv(&tension_ref);
 
-        // Pasamos los valores de mV a V 
-        float tension_regulador = (ref_mv * 2.0) / 1000.0;
-        float tension_sensor_cal_v = (tension_sensor_cal_mv * 2.0) / 1000.0;
-
-        // Formula del fabricante: Vout = Vs * (0.018 * P) [V]
-        // Despejando P = (Vout / Vs) / 0.018 [kPa]
-        float presion_kPa = (tension_sensor_cal_v / tension_regulador) / 0.018;
-        float presion_mmHg = presion_kPa * conv_kPa_mmhg;
-        if (presion_mmHg < 0.0){
-            presion_mmHg = 0.0; 
+        if (hal_gpio_read(&boton_down) == HAL_GPIO_STATE_LOW){
+            if (estado_actual == PANTALLA_MENU){
+                opcion_cursor++;
+                if (opcion_cursor > MAX_OPCIONES) opcion_cursor = 0;
+            }
+            vTaskDelay(pdMS_TO_TICKS(150));
         }
-        printf("Sensor MPX: %d mV | referencia: %d mV\n", tension_sensor_cal_mv, ref_mv);
-        //printf("Sensor MPX: %.0f mmHg\n", presion_mmHg);
-        
-        //Se muestra por pantalla el verdadero valor de la medicion sin el ruido interno del uC
-        char texto_oled[32];
 
-        snprintf(texto_oled, sizeof(texto_oled), "Presion: %.0f mmHg\n", presion_mmHg);
-        hal_ssd1306_clear();
-        hal_ssd1306_draw_string(0, 2, texto_oled);
-        hal_ssd1306_update();
+        if (hal_gpio_read(&boton_up) == HAL_GPIO_STATE_LOW) {
+            if (estado_actual == PANTALLA_MENU) {
+                opcion_cursor--;
+                if (opcion_cursor < 0) opcion_cursor = MAX_OPCIONES;
+            }
+            vTaskDelay(pdMS_TO_TICKS(150));
+        }
 
-        vTaskDelay(pdMS_TO_TICKS(500));
+        if (hal_gpio_read(&boton_ok) == HAL_GPIO_STATE_LOW){
+            if(estado_actual == PANTALLA_MENU){
+                if (opcion_cursor == 0){
+                    estado_actual = PANTALLA_MEDICION;
+                } else if (opcion_cursor == 1){
+                    estado_actual = PANTALLA_VELOCIDAD;
+                }
+                hal_ssd1306_clear();
+            }
+            vTaskDelay(pdMS_TO_TICKS(150));
+        }
+
+        if (hal_gpio_read(&boton_back) == HAL_GPIO_STATE_LOW){
+            if (estado_actual == PANTALLA_MEDICION){
+                estado_actual = PANTALLA_MENU;
+                hal_ssd1306_clear();
+            }
+            if (estado_actual == PANTALLA_VELOCIDAD){
+                estado_actual = PANTALLA_MENU;
+                hal_ssd1306_clear();
+            }
+            vTaskDelay(pdMS_TO_TICKS(150));
+        }
+
+        switch (estado_actual){
+
+            case PANTALLA_MENU: {
+                static int contador_vueltas = 0;
+                contador_vueltas++;
+                int mostrar_cursor = (contador_vueltas / 10) % 2;
+                hal_ssd1306_clear();
+                hal_ssd1306_draw_string(0, 0, "___MENU PRINCIPAL___");
+                const char* textos_opciones[2] = {"1. Medir Presion", 
+                                                  "2. Medir Velocidad"
+                                                  };
+                uint8_t posiciones_y[2] = {2, 4}; 
+
+                for (int i = 0; i < 2; i++) {
+                    char texto_a_dibujar[32];
+                    if (opcion_cursor == i && mostrar_cursor == 1) {
+                        snprintf(texto_a_dibujar, sizeof(texto_a_dibujar), "> %s", textos_opciones[i]);
+                    } else {
+                        snprintf(texto_a_dibujar, sizeof(texto_a_dibujar), "  %s", textos_opciones[i]);
+                    }
+                    hal_ssd1306_draw_string(0, posiciones_y[i], texto_a_dibujar);
+                }
+                hal_ssd1306_update();
+                break;
+            }
+
+            case PANTALLA_MEDICION: {
+                //lectura inicial de ambos canales, la lectura del sensor ya esta calibrada 
+                int tension_sensor_cal_mv = hal_adc_read_mv(&sensor_presion) - offsetprom;
+                int ref_mv = hal_adc_read_mv(&tension_ref);
+
+                // Pasamos los valores de mV a V 
+                float tension_regulador = (ref_mv * 2.0) / 1000.0;
+                float tension_sensor_cal_v = (tension_sensor_cal_mv * 2.0) / 1000.0;
+
+                // Formula del fabricante: Vout = Vs * (0.018 * P) [V]
+                // Despejando P = (Vout / Vs) / 0.018 [kPa]
+                float presion_kPa = (tension_sensor_cal_v / tension_regulador) / 0.018;
+                float presion_mmHg = presion_kPa * conv_kPa_mmhg;
+                if (presion_mmHg < 0.0){
+                    presion_mmHg = 0.0; 
+                }
+
+                //Se muestra por pantalla el verdadero valor de la medicion sin el ruido interno del uC
+                char texto_oled[32];
+
+                snprintf(texto_oled, sizeof(texto_oled), "Presion: %.0f mmHg\n", presion_mmHg);     
+                hal_ssd1306_draw_string(0, 0, "MODO MEDICION");
+                hal_ssd1306_draw_string(0, 2, texto_oled);
+                hal_ssd1306_draw_string(0, 7, "[BACK] -> salir");
+                hal_ssd1306_update();
+                break;
+            }
+
+            case PANTALLA_VELOCIDAD: {
+                static int64_t tiempo_anterior = 0;
+                static float presion_mmHg_anterior = 0.0;
+                static float velocidad_mmHg_s = 0.0;
+
+                int tension_sensor_cal_mv = hal_adc_read_mv(&sensor_presion) - offsetprom;
+                int ref_mv = hal_adc_read_mv(&tension_ref);
+                float tension_regulador = (ref_mv * 2.0) / 1000.0;
+                float tension_sensor_cal_v = (tension_sensor_cal_mv * 2.0) / 1000.0;
+                float presion_kPa = (tension_sensor_cal_v / tension_regulador) / 0.018;
+                float presion_mmHg_actual = presion_kPa * conv_kPa_mmhg;
+                if (presion_mmHg_actual < 0.0){
+                    presion_mmHg_actual = 0.0; 
+                }
+                
+                int64_t tiempo_actual = esp_timer_get_time();
+                if ((tiempo_actual - tiempo_anterior) >= 1000000){
+                    float delta_p = presion_mmHg_actual - presion_mmHg_anterior;
+                    velocidad_mmHg_s = delta_p;
+                    tiempo_anterior = tiempo_actual;
+                    presion_mmHg_anterior = presion_mmHg_actual;
+                }
+
+                char texto_vel[32];
+                snprintf(texto_vel, sizeof(texto_vel), "V: %.1f mmHg/s", velocidad_mmHg_s);
+
+                hal_ssd1306_draw_string(0, 0, "MODO VELOCIDAD");
+                hal_ssd1306_draw_string(0, 3, texto_vel);
+                hal_ssd1306_draw_string(0, 7, "[BACK] p/Salir");
+                
+                hal_ssd1306_update();
+                break;
+            }
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(50));
     }
 }
 
