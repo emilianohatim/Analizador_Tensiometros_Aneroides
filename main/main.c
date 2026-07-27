@@ -37,6 +37,7 @@ SPDX-License-Identifier: MIT
 #include "hal_i2c.h"
 #include "hal_adc.h"
 #include "hal_ssd1306.h"
+#include "hal_bateria.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_timer.h"
@@ -54,6 +55,7 @@ hal_gpio_t oled_reset = { .pin = 16, .direction = HAL_GPIO_DIR_OUTPUT};
 
 hal_adc_t sensor_presion = { .unit = 1, .channel = 0};
 hal_adc_t tension_ref = { .unit = 1, .channel = 1};
+hal_adc_t nivel_bat = { .unit = 2, .channel = 5};
 
 typedef enum{
     PANTALLA_MENU,
@@ -86,25 +88,16 @@ void inicializar_hardware(void){
     //Inicialización del ADC
     hal_adc_init(&sensor_presion);
     hal_adc_init(&tension_ref);
+    hal_adc_init(&nivel_bat);
 
     //Inicialización de la comunicación y pantalla 
     hal_i2c_init(4,15);
     hal_ssd1306_init();
 }
 
-int Calibrar(hal_adc_t * presion_mv){
-    int offset = 0;
-    for (int i = 0; i < 100; i++){
-        offset = offset + hal_adc_read_mv(presion_mv);
-        vTaskDelay(pdMS_TO_TICKS(10));
-    }
-    int offsetprom = offset/100;
-    return offsetprom;
-}
-
 /* === Private variable definitions ============================================================ */
 
-int conv_kPa_mmhg = 7.5006375;
+float conv_kPa_mmhg = 7.5006375f;
 
 /* === Public data type definitions =============================================================*/
 
@@ -117,7 +110,6 @@ int conv_kPa_mmhg = 7.5006375;
 void app_main(void){    
 
     inicializar_hardware();
-    int offsetprom = Calibrar(&sensor_presion);
     
     while(1){
 
@@ -173,8 +165,19 @@ void app_main(void){
                 static int contador_vueltas = 0;
                 contador_vueltas++;
                 int mostrar_cursor = (contador_vueltas / 10) % 2;
+
+                uint8_t nivel_bateria = hal_bateria_obtener_porcentaje(&nivel_bat);
+                int cargador_enchufado = hal_bateria_esta_cargando();
+                char texto_bat[16];
+                if (cargador_enchufado == 1){
+                    snprintf(texto_bat, sizeof(texto_bat), "USB Bat:%d%%", nivel_bateria);                
+                } else {
+                    snprintf(texto_bat, sizeof(texto_bat), "    Bat:%d%%", nivel_bateria);
+                }
+
                 hal_ssd1306_clear();
-                hal_ssd1306_draw_string(0, 0, "___MENU PRINCIPAL___");
+                hal_ssd1306_draw_string(0, 0, "MENU");
+                hal_ssd1306_draw_string(55, 0, texto_bat);
                 const char* textos_opciones[3] = {"1. Medir Presion", 
                                                   "2. Medir Velocidad",
                                                   "3. medir fugas"
@@ -196,17 +199,18 @@ void app_main(void){
 
             case PANTALLA_MEDICION: {
                 //lectura inicial de ambos canales, la lectura del sensor ya esta calibrada 
-                int tension_sensor_cal_mv = hal_adc_read_mv(&sensor_presion) - offsetprom;
+                int tension_sensor_cal_mv = hal_adc_read_mv(&sensor_presion);
                 int ref_mv = hal_adc_read_mv(&tension_ref);
 
                 // Pasamos los valores de mV a V 
-                float tension_regulador = (ref_mv * 2.0) / 1000.0;
+                float tension_regulador = (ref_mv * 2.0) / 1000.0;                    // los 2.0 esta dado por el factor proveniente del divisor de tensión
                 float tension_sensor_cal_v = (tension_sensor_cal_mv * 2.0) / 1000.0;
 
-                // Formula del fabricante: Vout = Vs * (0.018 * P) [V]
-                // Despejando P = (Vout / Vs) / 0.018 [kPa]
-                float presion_kPa = (tension_sensor_cal_v / tension_regulador) / 0.018;
+                // Formula del fabricante: Vout = Vs * (0.018 * P + 0.04) [V]
+                // Despejando P = ((Vout / Vs) - 0.04) / 0.018 [kPa]
+                float presion_kPa = ((tension_sensor_cal_v / tension_regulador) - 0.056) / 0.018;
                 float presion_mmHg = presion_kPa * conv_kPa_mmhg;
+                printf("el valor de presion es: %f\n", presion_mmHg);
                 if (presion_mmHg < 0.0){
                     presion_mmHg = 0.0; 
                 }
@@ -227,11 +231,11 @@ void app_main(void){
                 static float presion_mmHg_anterior = 0.0;
                 static float velocidad_mmHg_s = 0.0;
 
-                int tension_sensor_cal_mv = hal_adc_read_mv(&sensor_presion) - offsetprom;
+                int tension_sensor_cal_mv = hal_adc_read_mv(&sensor_presion);
                 int ref_mv = hal_adc_read_mv(&tension_ref);
                 float tension_regulador = (ref_mv * 2.0) / 1000.0;
                 float tension_sensor_cal_v = (tension_sensor_cal_mv * 2.0) / 1000.0;
-                float presion_kPa = (tension_sensor_cal_v / tension_regulador) / 0.018;
+                float presion_kPa = ((tension_sensor_cal_v / tension_regulador) - 0.04) / 0.018;
                 float presion_mmHg_actual = presion_kPa * conv_kPa_mmhg;
                 if (presion_mmHg_actual < 0.0){
                     presion_mmHg_actual = 0.0; 
@@ -263,11 +267,11 @@ void app_main(void){
                 static float fuga_total = 0.0;
                 static int tiempo_restante = 60;
 
-                int tension_sensor_cal_mv = hal_adc_read_mv(&sensor_presion) - offsetprom;
+                int tension_sensor_cal_mv = hal_adc_read_mv(&sensor_presion);
                 int ref_mv = hal_adc_read_mv(&tension_ref);
                 float tension_regulador = (ref_mv * 2.0) / 1000.0;
                 float tension_sensor_cal_v = (tension_sensor_cal_mv * 2.0) / 1000.0;
-                float presion_kPa = (tension_sensor_cal_v / tension_regulador) / 0.018;
+                float presion_kPa = ((tension_sensor_cal_v / tension_regulador) - 0.04) / 0.018;
                 float presion_mmHg_actual = presion_kPa * conv_kPa_mmhg;
                 if (presion_mmHg_actual < 0.0){
                     presion_mmHg_actual = 0.0; 
