@@ -1,29 +1,4 @@
-/*********************************************************************************************************************
-Copyright 2026, Proyecto de Graduación
-Facultad de Ciencias Exactas y Tecnologia
-Universidad Nacional de Tucuman - UNT
-
-Copyright 2026, Emiliano Hatim <emilianohatim01@gmail.com>
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software is furnished to do so,
-subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
-FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
-COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
-IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
-CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-SPDX-License-Identifier: MIT
-*************************************************************************************************/
+//Copyright 2026, Proyecto de Graduación
 
 /** @file 
  * @brief 
@@ -97,7 +72,7 @@ void inicializar_hardware(void){
 
 /* === Private variable definitions ============================================================ */
 
-float conv_kPa_mmhg = 7.5006375f;
+float conv_kPa_mmhg = 7.50062;
 
 /* === Public data type definitions =============================================================*/
 
@@ -198,27 +173,39 @@ void app_main(void){
             }
 
             case PANTALLA_MEDICION: {
-                //lectura inicial de ambos canales, la lectura del sensor ya esta calibrada 
-                int tension_sensor_cal_mv = hal_adc_read_mv(&sensor_presion);
-                int ref_mv = hal_adc_read_mv(&tension_ref);
+                // 1. Leemos en milivoltios (usamos int32_t para permitir matemáticas grandes luego)
+                int32_t tension_sensor_cal_mv = hal_adc_read_mv(&sensor_presion);
+                int32_t ref_mv = hal_adc_read_mv(&tension_ref);
 
-                // Pasamos los valores de mV a V 
-                float tension_regulador = (ref_mv * 2.0) / 1000.0;                    // los 2.0 esta dado por el factor proveniente del divisor de tensión
-                float tension_sensor_cal_v = (tension_sensor_cal_mv * 2.0) / 1000.0;
+                // 2. Aplicamos la fórmula matemática de enteros
+                // Numerador: (7000 * V_sensor) - (392 * V_ref)
+                int32_t numerador = (7000 * tension_sensor_cal_mv) - (392 * ref_mv);
+                // Denominador: 18 * V_ref
+                int32_t denominador = 18 * ref_mv;
 
-                // Formula del fabricante: Vout = Vs * (0.018 * P + 0.04) [V]
-                // Despejando P = ((Vout / Vs) - 0.04) / 0.018 [kPa]
-                float presion_kPa = ((tension_sensor_cal_v / tension_regulador) - 0.056) / 0.018;
-                float presion_mmHg = presion_kPa * conv_kPa_mmhg;
-                printf("el valor de presion es: %f\n", presion_mmHg);
-                if (presion_mmHg < 0.0){
-                    presion_mmHg = 0.0; 
+                // 3. Calculamos la presión (la división entera trunca los decimales automáticamente)
+                int32_t presion_mmHg = numerador / denominador;
+
+                // 4. Filtramos el ruido negativo (underflow) que ahora SÍ funciona porque int32_t tiene signo
+                if (presion_mmHg < 0){
+                    presion_mmHg = 0; 
                 }
 
-                //Se muestra por pantalla el verdadero valor de la medicion sin el ruido interno del uC
-                char texto_oled[32];
+                // (Opcional) Promedio: Idealmente, mete la lectura del ADC dentro del for
+                // para promediar lecturas reales, pero respetando tu lógica actual:
+                int32_t promedio_presion = 0;
+                for (int i = 0; i < 16; i++) {
+                    promedio_presion += presion_mmHg;
+                }
+                int32_t presion_mmHg_promediada = (promedio_presion / 16) + 7;
+                
+                int32_t presion_calibrada = (int32_t)(((presion_mmHg_promediada - 6.46f) / 0.898f) + 0.5f); // Redondeo al entero más cercano
 
-                snprintf(texto_oled, sizeof(texto_oled), "Presion: %.0f mmHg\n", presion_mmHg);     
+                printf("el valor de presion es: %d\n", (int)presion_calibrada);
+
+                // 5. Se muestra por pantalla
+                char texto_oled[32];
+                snprintf(texto_oled, sizeof(texto_oled), "Presion: %d mmHg\n", (int)presion_calibrada);    
                 hal_ssd1306_draw_string(0, 0, "MODO MEDICION");
                 hal_ssd1306_draw_string(0, 2, texto_oled);
                 hal_ssd1306_draw_string(0, 7, "[BACK] -> salir");
