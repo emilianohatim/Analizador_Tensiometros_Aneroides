@@ -1,6 +1,31 @@
-//Copyright 2026, Proyecto de Graduación
+/*********************************************************************************************************************
+Copyright 2026, Proyecto de Graduación
+Facultad de Ciencias Exactas y Tecnologia
+Universidad Nacional de Tucuman - UNT
 
-/** @file 
+Copyright 2026, Emiliano Hatim <emilianohatim01@gmail.com>
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software is furnished to do so,
+subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+SPDX-License-Identifier: MIT
+*************************************************************************************************/
+
+/** @file main.c
  * @brief 
  * 
  */
@@ -35,13 +60,17 @@ hal_adc_t nivel_bat = { .unit = 2, .channel = 5};
 typedef enum{
     PANTALLA_MENU,
     PANTALLA_MEDICION,
-    PANTALLA_VELOCIDAD,
-    PANTALLA_fUGAS
+    PANTALLA_FUGAS,
+    PANTALLA_DESINFLADO, 
+    PANTALLA_LIBERACION
 } estado_equipo_t;
 
 estado_equipo_t estado_actual = PANTALLA_MENU;
 int opcion_cursor = 0;                          /**< Selección de opciones */
-const int MAX_OPCIONES = 2;                     /**< Limite del cursor */ 
+const int MAX_OPCIONES = 3;                     /**< Limite del cursor */ 
+const uint8_t CANTIDAD_ENSAYOS = 4;
+
+int presion_ajustada = 300;
 
 /* === Private function definitions =========================================================== */
 
@@ -93,6 +122,9 @@ void app_main(void){
                 opcion_cursor++;
                 if (opcion_cursor > MAX_OPCIONES) opcion_cursor = 0;
             }
+            if (estado_actual == PANTALLA_LIBERACION){
+                presion_ajustada--;
+            }
             vTaskDelay(pdMS_TO_TICKS(150));
         }
 
@@ -100,6 +132,9 @@ void app_main(void){
             if (estado_actual == PANTALLA_MENU) {
                 opcion_cursor--;
                 if (opcion_cursor < 0) opcion_cursor = MAX_OPCIONES;
+            }
+            if (estado_actual == PANTALLA_LIBERACION){
+                presion_ajustada++;
             }
             vTaskDelay(pdMS_TO_TICKS(150));
         }
@@ -109,9 +144,11 @@ void app_main(void){
                 if (opcion_cursor == 0){
                     estado_actual = PANTALLA_MEDICION;
                 } else if (opcion_cursor == 1){
-                    estado_actual = PANTALLA_VELOCIDAD;
+                    estado_actual = PANTALLA_FUGAS;
                 } else if (opcion_cursor == 2){
-                    estado_actual = PANTALLA_fUGAS;
+                    estado_actual = PANTALLA_DESINFLADO;
+                } else if (opcion_cursor == 3){
+                    estado_actual = PANTALLA_LIBERACION;
                 }
                 hal_ssd1306_clear();
             }
@@ -123,13 +160,17 @@ void app_main(void){
                 estado_actual = PANTALLA_MENU;
                 hal_ssd1306_clear();
             }
-            if (estado_actual == PANTALLA_VELOCIDAD){
+            if (estado_actual == PANTALLA_DESINFLADO){
                 estado_actual = PANTALLA_MENU;
                 hal_ssd1306_clear();
             }
-            if (estado_actual == PANTALLA_fUGAS) {
+            if (estado_actual == PANTALLA_FUGAS) {
                 estado_actual = PANTALLA_MENU;
                 hal_ssd1306_clear();;
+            }
+            if (estado_actual == PANTALLA_LIBERACION) {
+                estado_actual = PANTALLA_MENU;
+                hal_ssd1306_clear();
             }
             vTaskDelay(pdMS_TO_TICKS(150));
         }
@@ -140,6 +181,7 @@ void app_main(void){
                 static int contador_vueltas = 0;
                 contador_vueltas++;
                 int mostrar_cursor = (contador_vueltas / 10) % 2;
+                hal_ssd1306_clear();
 
                 uint8_t nivel_bateria = hal_bateria_obtener_porcentaje(&nivel_bat);
                 int cargador_enchufado = hal_bateria_esta_cargando();
@@ -150,62 +192,52 @@ void app_main(void){
                     snprintf(texto_bat, sizeof(texto_bat), "    Bat:%d%%", nivel_bateria);
                 }
 
-                hal_ssd1306_clear();
-                hal_ssd1306_draw_string(0, 0, "MENU");
+                char titulo_menu[32];
+                int pagina_actual = (opcion_cursor / 3) + 1;
+                int paginas_totales = (CANTIDAD_ENSAYOS + 2) / 3;
+                snprintf(titulo_menu, sizeof(titulo_menu), "MENU %d/%d", pagina_actual, paginas_totales);
+                hal_ssd1306_draw_string(0, 0, titulo_menu);
                 hal_ssd1306_draw_string(55, 0, texto_bat);
-                const char* textos_opciones[3] = {"1. Medir Presion", 
-                                                  "2. Medir Velocidad",
-                                                  "3. medir fugas"
+                const char* textos_opciones[4] = {"1. Presion", 
+                                                  "2. Fugas",
+                                                  "3. Tasa desinflado",
+                                                  "4. Liberacion"
                                                   };
+                int indice_inicio = (opcion_cursor / 3) * 3;
                 uint8_t posiciones_y[3] = {2, 4, 6}; 
 
                 for (int i = 0; i < 3; i++) {
-                    char texto_a_dibujar[32];
-                    if (opcion_cursor == i && mostrar_cursor == 1) {
-                        snprintf(texto_a_dibujar, sizeof(texto_a_dibujar), "> %s", textos_opciones[i]);
-                    } else {
-                        snprintf(texto_a_dibujar, sizeof(texto_a_dibujar), "  %s", textos_opciones[i]);
+                    int indice_real = indice_inicio + i;
+                    if (indice_real < CANTIDAD_ENSAYOS){
+                        char texto_a_dibujar[32];
+                        if (opcion_cursor == indice_real && mostrar_cursor == 1) {
+                            snprintf(texto_a_dibujar, sizeof(texto_a_dibujar), "> %s", textos_opciones[indice_real]);
+                        } else {
+                            snprintf(texto_a_dibujar, sizeof(texto_a_dibujar), "  %s", textos_opciones[indice_real]);
+                        }
+                        hal_ssd1306_draw_string(0, posiciones_y[i], texto_a_dibujar);
                     }
-                    hal_ssd1306_draw_string(0, posiciones_y[i], texto_a_dibujar);
                 }
                 hal_ssd1306_update();
                 break;
             }
 
             case PANTALLA_MEDICION: {
-                // 1. Leemos en milivoltios (usamos int32_t para permitir matemáticas grandes luego)
-                int32_t tension_sensor_cal_mv = hal_adc_read_mv(&sensor_presion);
-                int32_t ref_mv = hal_adc_read_mv(&tension_ref);
-
-                // 2. Aplicamos la fórmula matemática de enteros
-                // Numerador: (7000 * V_sensor) - (392 * V_ref)
-                int32_t numerador = (7000 * tension_sensor_cal_mv) - (392 * ref_mv);
-                // Denominador: 18 * V_ref
-                int32_t denominador = 18 * ref_mv;
-
-                // 3. Calculamos la presión (la división entera trunca los decimales automáticamente)
-                int32_t presion_mmHg = numerador / denominador;
-
-                // 4. Filtramos el ruido negativo (underflow) que ahora SÍ funciona porque int32_t tiene signo
-                if (presion_mmHg < 0){
-                    presion_mmHg = 0; 
-                }
-
-                // (Opcional) Promedio: Idealmente, mete la lectura del ADC dentro del for
-                // para promediar lecturas reales, pero respetando tu lógica actual:
+                hal_ssd1306_clear();
                 int32_t promedio_presion = 0;
                 for (int i = 0; i < 16; i++) {
-                    promedio_presion += presion_mmHg;
+                    int tension_sensor_cal_mv = hal_adc_read_mv(&sensor_presion);
+                    int ref_mv = hal_adc_read_mv(&tension_ref);
+                    int32_t numerador = (7000 * tension_sensor_cal_mv) - (392 * ref_mv);
+                    int32_t denominador = 18 * ref_mv;
+                    int32_t muestra = numerador / denominador;
+                    if (muestra < 0) muestra = 0;
+                    promedio_presion += muestra;
                 }
                 int32_t presion_mmHg_promediada = (promedio_presion / 16) + 7;
-                
-                int32_t presion_calibrada = (int32_t)(((presion_mmHg_promediada - 6.46f) / 0.898f) + 0.5f); // Redondeo al entero más cercano
-
-                printf("el valor de presion es: %d\n", (int)presion_calibrada);
-
-                // 5. Se muestra por pantalla
+                int32_t presion_calibrada = (int32_t)(((presion_mmHg_promediada - 6.46f) / 0.898f) + 0.5f); 
                 char texto_oled[32];
-                snprintf(texto_oled, sizeof(texto_oled), "Presion: %d mmHg\n", (int)presion_calibrada);    
+                snprintf(texto_oled, sizeof(texto_oled), "Presion: %d mmHg", (int)presion_calibrada);    
                 hal_ssd1306_draw_string(0, 0, "MODO MEDICION");
                 hal_ssd1306_draw_string(0, 2, texto_oled);
                 hal_ssd1306_draw_string(0, 7, "[BACK] -> salir");
@@ -213,69 +245,87 @@ void app_main(void){
                 break;
             }
 
-            case PANTALLA_VELOCIDAD: {
+            case PANTALLA_DESINFLADO: {
+                hal_ssd1306_clear();
                 static int64_t tiempo_anterior = 0;
-                static float presion_mmHg_anterior = 0.0;
-                static float velocidad_mmHg_s = 0.0;
+                static int64_t presion_mmHg_anterior = 0;
+                static int64_t velocidad_mmHg_s = 0;
 
-                int tension_sensor_cal_mv = hal_adc_read_mv(&sensor_presion);
-                int ref_mv = hal_adc_read_mv(&tension_ref);
-                float tension_regulador = (ref_mv * 2.0) / 1000.0;
-                float tension_sensor_cal_v = (tension_sensor_cal_mv * 2.0) / 1000.0;
-                float presion_kPa = ((tension_sensor_cal_v / tension_regulador) - 0.04) / 0.018;
-                float presion_mmHg_actual = presion_kPa * conv_kPa_mmhg;
-                if (presion_mmHg_actual < 0.0){
-                    presion_mmHg_actual = 0.0; 
+                int32_t promedio_presion = 0;
+                for (int i = 0; i < 16; i++) {
+                    int tension_sensor_cal_mv = hal_adc_read_mv(&sensor_presion);
+                    int ref_mv = hal_adc_read_mv(&tension_ref);
+                    int32_t numerador = (7000 * tension_sensor_cal_mv) - (392 * ref_mv);
+                    int32_t denominador = 18 * ref_mv;
+                    int32_t muestra = numerador / denominador;
+                    if (muestra < 0) muestra = 0;
+                    promedio_presion += muestra;
                 }
+                int32_t presion_mmHg_promediada = (promedio_presion / 16) + 7;
+                int32_t presion_calibrada = (int32_t)(((presion_mmHg_promediada - 6.46f) / 0.898f) + 0.5f); 
                 
                 int64_t tiempo_actual = esp_timer_get_time();
-                if ((tiempo_actual - tiempo_anterior) >= 1000000){
-                    float delta_p = presion_mmHg_actual - presion_mmHg_anterior;
-                    velocidad_mmHg_s = delta_p;
+                int64_t dt_us = tiempo_actual - tiempo_anterior;
+                if (dt_us >= 50000){
+                    int64_t delta_p = presion_calibrada - presion_mmHg_anterior;
+                    presion_mmHg_anterior = presion_calibrada;
+                    int64_t dt_s = dt_us/1000000;
                     tiempo_anterior = tiempo_actual;
-                    presion_mmHg_anterior = presion_mmHg_actual;
+                    int64_t velocidad_cruda = delta_p / dt_s;
+
+                    velocidad_mmHg_s = velocidad_cruda;
+                    if (velocidad_mmHg_s < 0.0f){
+                        velocidad_mmHg_s = velocidad_mmHg_s * (-1.0f);
+                    }
                 }
 
-                char texto_vel[32];
-                snprintf(texto_vel, sizeof(texto_vel), "V: %.1f mmHg/s", velocidad_mmHg_s);
+                char texto_pres[32];
+                snprintf(texto_pres, sizeof(texto_pres), "Presion: %d mmHg", (int)presion_calibrada);
 
-                hal_ssd1306_draw_string(0, 0, "MODO VELOCIDAD");
-                hal_ssd1306_draw_string(0, 3, texto_vel);
-                hal_ssd1306_draw_string(0, 7, "[BACK] p/Salir");
+                char texto_vel[32];
+                snprintf(texto_vel, sizeof(texto_vel), "Vel: %d mmHg/s", (int)velocidad_mmHg_s);
+
+                hal_ssd1306_draw_string(0, 0, "MODO DESINFLADO");
+                hal_ssd1306_draw_string(0, 2, texto_pres);
+                hal_ssd1306_draw_string(0, 4, texto_vel);
+                hal_ssd1306_draw_string(0, 7, "[BACK] -> Salir");
                 
                 hal_ssd1306_update();
                 break;
             }
 
-            case PANTALLA_fUGAS: {
+            case PANTALLA_FUGAS: {
                 static int fase_prueba = 0;
-                static int64_t tiempo_inicio = 0.0;
-                static float presion_inicial = 0.0;
-                static float fuga_total = 0.0;
-                static int tiempo_restante = 60;
+                static int64_t tiempo_inicio = 0;
+                static int64_t presion_inicial = 0;
+                static int64_t fuga_total = 0;
+                static int64_t tiempo_restante = 30;
 
-                int tension_sensor_cal_mv = hal_adc_read_mv(&sensor_presion);
-                int ref_mv = hal_adc_read_mv(&tension_ref);
-                float tension_regulador = (ref_mv * 2.0) / 1000.0;
-                float tension_sensor_cal_v = (tension_sensor_cal_mv * 2.0) / 1000.0;
-                float presion_kPa = ((tension_sensor_cal_v / tension_regulador) - 0.04) / 0.018;
-                float presion_mmHg_actual = presion_kPa * conv_kPa_mmhg;
-                if (presion_mmHg_actual < 0.0){
-                    presion_mmHg_actual = 0.0; 
+                int32_t promedio_presion = 0;
+                for (int i = 0; i < 16; i++) {
+                    int tension_sensor_cal_mv = hal_adc_read_mv(&sensor_presion);
+                    int ref_mv = hal_adc_read_mv(&tension_ref);
+                    int32_t numerador = (7000 * tension_sensor_cal_mv) - (392 * ref_mv);
+                    int32_t denominador = 18 * ref_mv;
+                    int32_t muestra = numerador / denominador;
+                    if (muestra < 0) muestra = 0;
+                    promedio_presion += muestra;
                 }
+                int32_t presion_mmHg_promediada = (promedio_presion / 16) + 7;
+                int32_t presion_calibrada = (int32_t)(((presion_mmHg_promediada - 6.46f) / 0.898f) + 0.5f); 
 
                 hal_ssd1306_clear();
                 hal_ssd1306_draw_string(0, 0, "MODO FUGAS");
 
                 if (fase_prueba == 0){
                     char txt_pres[32];
-                    snprintf(txt_pres, sizeof(txt_pres), "P_actual: %.0f mmHg", presion_mmHg_actual);
+                    snprintf(txt_pres, sizeof(txt_pres), "P_actual: %d mmHg", (int)presion_calibrada);
                     hal_ssd1306_draw_string(0, 2, "Inflar brazalete...");
                     hal_ssd1306_draw_string(0, 4, txt_pres);
                     hal_ssd1306_draw_string(0, 6, "[UP] -> Iniciar");
 
                     if (hal_gpio_read(&boton_up) == HAL_GPIO_STATE_LOW){
-                        presion_inicial = presion_mmHg_actual;
+                        presion_inicial = presion_calibrada;
                         tiempo_inicio = esp_timer_get_time();
                         fase_prueba = 1;
                         vTaskDelay(pdMS_TO_TICKS(150));
@@ -284,25 +334,25 @@ void app_main(void){
                 else if (fase_prueba == 1){
                     int64_t tiempo_actual = esp_timer_get_time();
                     int segundos_pasados = (tiempo_actual - tiempo_inicio) / 1000000;
-                    tiempo_restante = 60 - segundos_pasados;
+                    tiempo_restante = 30 - segundos_pasados;
                     
                     char txt_tiempo[32];
                     char txt_pinicio[32];
-                    snprintf(txt_tiempo, sizeof(txt_tiempo), "Tiempo: %d s", tiempo_restante);
-                    snprintf(txt_pinicio, sizeof(txt_pinicio), "P_inicial: %.0f mmHg", presion_inicial);
+                    snprintf(txt_tiempo, sizeof(txt_tiempo), "Tiempo: %d s", (int)tiempo_restante);
+                    snprintf(txt_pinicio, sizeof(txt_pinicio), "P_inicial: %d mmHg", (int)presion_inicial);
 
                     hal_ssd1306_draw_string(0, 2, txt_tiempo);
                     hal_ssd1306_draw_string(0, 4, txt_pinicio);
                     hal_ssd1306_draw_string(0, 6, "Midiendo....");
 
                     if (tiempo_restante <= 0){
-                        fuga_total = presion_inicial - presion_mmHg_actual;
+                        fuga_total = presion_inicial - presion_calibrada;
                         fase_prueba = 2;
                     }
                 }
                 else if (fase_prueba == 2){
                     char txt_res[32];
-                    snprintf(txt_res, sizeof(txt_res), "Perdidas: %.1f mmHg", fuga_total);
+                    snprintf(txt_res, sizeof(txt_res), "Perdidas: %d mmHg", (int)fuga_total);
 
                     hal_ssd1306_draw_string(0, 2, "Prueba finalizada");
                     hal_ssd1306_draw_string(0, 4, txt_res);
@@ -320,6 +370,64 @@ void app_main(void){
                     vTaskDelay(pdMS_TO_TICKS(150));
                 }
                 hal_ssd1306_update();
+                break;
+            }
+
+            case PANTALLA_LIBERACION: {
+                hal_ssd1306_clear();
+                int32_t promedio_presion = 0;
+                for (int i = 0; i < 16; i++) {
+                    int tension_sensor_cal_mv = hal_adc_read_mv(&sensor_presion);
+                    int ref_mv = hal_adc_read_mv(&tension_ref);
+                    int32_t numerador = (7000 * tension_sensor_cal_mv) - (392 * ref_mv);
+                    int32_t denominador = 18 * ref_mv;
+                    int32_t muestra = numerador / denominador;
+                    if (muestra < 0) muestra = 0;
+                    promedio_presion += muestra;
+                }
+                int32_t presion_mmHg_promediada = (promedio_presion / 16) + 7;
+                int32_t presion_calibrada = (int32_t)(((presion_mmHg_promediada - 6.46f) / 0.898f) + 0.5f); 
+                
+                char ajuste_presion[32];
+                snprintf(ajuste_presion, sizeof(ajuste_presion), "P_ajus: %d mmHg", (int)presion_ajustada);
+                
+                char texto_presion[32];
+                snprintf(texto_presion, sizeof(texto_presion), "P_actual: %d mmHg", (int)presion_calibrada);
+                
+                hal_ssd1306_draw_string(0, 0, "MODO LIBERACION");
+                hal_ssd1306_draw_string(0, 2, ajuste_presion);
+                hal_ssd1306_draw_string(0, 3, texto_presion);
+                
+                static int fase_liberacion = 0;
+                static int64_t tiempo_inicio = 0;
+                static int64_t tiempo_final_s = 0;
+
+                if (fase_liberacion == 0){
+                    hal_ssd1306_draw_string(0, 5, "Insuflar");
+                    if (presion_calibrada > presion_ajustada){
+                        tiempo_inicio = esp_timer_get_time();
+                        fase_liberacion = 1;
+                    }
+                } else if (fase_liberacion == 1){
+                    hal_ssd1306_draw_string(0, 5, "Girar valvula");
+                    if (presion_calibrada <= 15) {
+                        int64_t tiempo_actual = esp_timer_get_time();
+                        tiempo_final_s = (tiempo_actual - tiempo_inicio) / 1000000;
+                        fase_liberacion = 2;
+                    }
+                } else if (fase_liberacion == 2){
+                    char texto_tiempo[32];
+                    snprintf(texto_tiempo, sizeof(texto_tiempo), "Tiempo: %d s", (int)tiempo_final_s);
+                    hal_ssd1306_draw_string(0, 5, texto_tiempo);
+                }
+
+                hal_ssd1306_draw_string(0, 7, "[BACK] -> Salir");
+                hal_ssd1306_update();
+                
+                if (hal_gpio_read(&boton_back) == HAL_GPIO_STATE_LOW) {
+                    fase_liberacion = 0;   
+                }
+
                 break;
             }
         }
