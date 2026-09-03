@@ -72,6 +72,10 @@ const uint8_t CANTIDAD_ENSAYOS = 4;
 
 int presion_ajustada = 300;
 
+int fase_liberacion = 0;
+int64_t tiempo_inicio_liberacion = 0;
+int64_t tiempo_final_liberacion_s = 0;
+
 /* === Private function definitions =========================================================== */
 
 void inicializar_hardware(void){
@@ -134,7 +138,13 @@ void app_main(void){
                 if (opcion_cursor < 0) opcion_cursor = MAX_OPCIONES;
             }
             if (estado_actual == PANTALLA_LIBERACION){
-                presion_ajustada++;
+                if (fase_liberacion == 0) {
+                    presion_ajustada++;
+                } else if (fase_liberacion == 2){
+                    fase_liberacion = 0;
+                    tiempo_inicio_liberacion = 0;
+                    tiempo_final_liberacion_s = 0;
+                } 
             }
             vTaskDelay(pdMS_TO_TICKS(150));
         }
@@ -228,8 +238,8 @@ void app_main(void){
                 for (int i = 0; i < 16; i++) {
                     int tension_sensor_cal_mv = hal_adc_read_mv(&sensor_presion);
                     int ref_mv = hal_adc_read_mv(&tension_ref);
-                    int32_t numerador = (7000 * tension_sensor_cal_mv) - (392 * ref_mv);
-                    int32_t denominador = 18 * ref_mv;
+                //    int32_t numerador = (7000 * tension_sensor_cal_mv) - (392 * ref_mv);
+                //   int32_t denominador = 18 * ref_mv;
                     int32_t muestra = numerador / denominador;
                     if (muestra < 0) muestra = 0;
                     promedio_presion += muestra;
@@ -269,13 +279,12 @@ void app_main(void){
                 if (dt_us >= 50000){
                     int64_t delta_p = presion_calibrada - presion_mmHg_anterior;
                     presion_mmHg_anterior = presion_calibrada;
-                    int64_t dt_s = dt_us/1000000;
                     tiempo_anterior = tiempo_actual;
-                    int64_t velocidad_cruda = delta_p / dt_s;
+                    int64_t velocidad_cruda = (delta_p * 1000000) / dt_us;
 
                     velocidad_mmHg_s = velocidad_cruda;
-                    if (velocidad_mmHg_s < 0.0f){
-                        velocidad_mmHg_s = velocidad_mmHg_s * (-1.0f);
+                    if (velocidad_mmHg_s < 0){
+                        velocidad_mmHg_s = -velocidad_mmHg_s;
                     }
                 }
 
@@ -386,54 +395,51 @@ void app_main(void){
                     promedio_presion += muestra;
                 }
                 int32_t presion_mmHg_promediada = (promedio_presion / 16) + 7;
-                int32_t presion_calibrada = (int32_t)(((presion_mmHg_promediada - 6.46f) / 0.898f) + 0.5f); 
-                
+                int32_t presion_calibrada = (int32_t)(((presion_mmHg_promediada - 6.46f) / 0.898f) + 0.5f);
+
                 char ajuste_presion[32];
                 snprintf(ajuste_presion, sizeof(ajuste_presion), "P_ajus: %d mmHg", (int)presion_ajustada);
-                
+
                 char texto_presion[32];
                 snprintf(texto_presion, sizeof(texto_presion), "P_actual: %d mmHg", (int)presion_calibrada);
-                
+
                 hal_ssd1306_draw_string(0, 0, "MODO LIBERACION");
                 hal_ssd1306_draw_string(0, 2, ajuste_presion);
                 hal_ssd1306_draw_string(0, 3, texto_presion);
-                
-                static int fase_liberacion = 0;
-                static int64_t tiempo_inicio = 0;
-                static int64_t tiempo_final_s = 0;
 
                 if (fase_liberacion == 0){
                     hal_ssd1306_draw_string(0, 5, "Insuflar");
                     if (presion_calibrada > presion_ajustada){
-                        tiempo_inicio = esp_timer_get_time();
+                        tiempo_inicio_liberacion = esp_timer_get_time();
                         fase_liberacion = 1;
                     }
                 } else if (fase_liberacion == 1){
                     hal_ssd1306_draw_string(0, 5, "Girar valvula");
                     if (presion_calibrada <= 15) {
                         int64_t tiempo_actual = esp_timer_get_time();
-                        tiempo_final_s = (tiempo_actual - tiempo_inicio) / 1000000;
+                        tiempo_final_liberacion_s = (tiempo_actual - tiempo_inicio_liberacion) / 1000000;
                         fase_liberacion = 2;
                     }
                 } else if (fase_liberacion == 2){
                     char texto_tiempo[32];
-                    snprintf(texto_tiempo, sizeof(texto_tiempo), "Tiempo: %d s", (int)tiempo_final_s);
+                    snprintf(texto_tiempo, sizeof(texto_tiempo), "Tiempo: %d s", (int)tiempo_final_liberacion_s);
                     hal_ssd1306_draw_string(0, 5, texto_tiempo);
+                    hal_ssd1306_draw_string(0, 6, "[UP] -> Reiniciar");
                 }
 
                 hal_ssd1306_draw_string(0, 7, "[BACK] -> Salir");
                 hal_ssd1306_update();
-                
+
                 if (hal_gpio_read(&boton_back) == HAL_GPIO_STATE_LOW) {
-                    fase_liberacion = 0;   
+                    fase_liberacion = 0;
                 }
 
                 break;
             }
-        }
 
         vTaskDelay(pdMS_TO_TICKS(50));
     }
+}
 }
 
 /* === End of documentation ==================================================================== */
