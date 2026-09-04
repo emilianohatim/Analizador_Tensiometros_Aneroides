@@ -238,14 +238,18 @@ void app_main(void){
                 for (int i = 0; i < 16; i++) {
                     int tension_sensor_cal_mv = hal_adc_read_mv(&sensor_presion);
                     int ref_mv = hal_adc_read_mv(&tension_ref);
-                //    int32_t numerador = (7000 * tension_sensor_cal_mv) - (392 * ref_mv);
-                //   int32_t denominador = 18 * ref_mv;
+                    int32_t numerador = (7000 * tension_sensor_cal_mv) - (392 * ref_mv);
+                    int32_t denominador = 18 * ref_mv;
                     int32_t muestra = numerador / denominador;
                     if (muestra < 0) muestra = 0;
                     promedio_presion += muestra;
                 }
                 int32_t presion_mmHg_promediada = (promedio_presion / 16) + 7;
                 int32_t presion_calibrada = (int32_t)(((presion_mmHg_promediada - 6.46f) / 0.898f) + 0.5f); 
+                if (presion_calibrada <= 198) {
+                    presion_calibrada = (int32_t)((presion_calibrada * 1.0052f) + 1.89f);
+                    if (presion_calibrada < 0) presion_calibrada = 0;
+                }
                 char texto_oled[32];
                 snprintf(texto_oled, sizeof(texto_oled), "Presion: %d mmHg", (int)presion_calibrada);    
                 hal_ssd1306_draw_string(0, 0, "MODO MEDICION");
@@ -273,7 +277,10 @@ void app_main(void){
                 }
                 int32_t presion_mmHg_promediada = (promedio_presion / 16) + 7;
                 int32_t presion_calibrada = (int32_t)(((presion_mmHg_promediada - 6.46f) / 0.898f) + 0.5f); 
-                
+                if (presion_calibrada <= 198) {
+                    presion_calibrada = (int32_t)((presion_calibrada * 1.0052f) + 1.89f);
+                    if (presion_calibrada < 0) presion_calibrada = 0;
+                }
                 int64_t tiempo_actual = esp_timer_get_time();
                 int64_t dt_us = tiempo_actual - tiempo_anterior;
                 if (dt_us >= 50000){
@@ -322,7 +329,10 @@ void app_main(void){
                 }
                 int32_t presion_mmHg_promediada = (promedio_presion / 16) + 7;
                 int32_t presion_calibrada = (int32_t)(((presion_mmHg_promediada - 6.46f) / 0.898f) + 0.5f); 
-
+                if (presion_calibrada <= 198) {
+                    presion_calibrada = (int32_t)((presion_calibrada * 1.0052f) + 1.89f);
+                    if (presion_calibrada < 0) presion_calibrada = 0;
+                }
                 hal_ssd1306_clear();
                 hal_ssd1306_draw_string(0, 0, "MODO FUGAS");
 
@@ -396,7 +406,10 @@ void app_main(void){
                 }
                 int32_t presion_mmHg_promediada = (promedio_presion / 16) + 7;
                 int32_t presion_calibrada = (int32_t)(((presion_mmHg_promediada - 6.46f) / 0.898f) + 0.5f);
-
+                if (presion_calibrada <= 198) {
+                    presion_calibrada = (int32_t)((presion_calibrada * 1.0052f) + 1.89f);
+                    if (presion_calibrada < 0) presion_calibrada = 0;
+                }
                 char ajuste_presion[32];
                 snprintf(ajuste_presion, sizeof(ajuste_presion), "P_ajus: %d mmHg", (int)presion_ajustada);
 
