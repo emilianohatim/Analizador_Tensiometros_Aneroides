@@ -60,6 +60,7 @@ hal_adc_t nivel_bat = { .unit = 2, .channel = 5};
 typedef enum{
     PANTALLA_MENU,
     PANTALLA_MEDICION,
+    PANTALLA_HISTERESIS, 
     PANTALLA_FUGAS,
     PANTALLA_DESINFLADO, 
     PANTALLA_LIBERACION
@@ -75,6 +76,8 @@ int presion_ajustada = 300;
 int fase_liberacion = 0;
 int64_t tiempo_inicio_liberacion = 0;
 int64_t tiempo_final_liberacion_s = 0;
+static volatile bool reiniciar_desinflado = false;
+static volatile bool iniciar_contador_histeresis = false;
 
 /* === Private function definitions =========================================================== */
 
@@ -104,8 +107,6 @@ void inicializar_hardware(void){
 }
 
 /* === Private variable definitions ============================================================ */
-
-float conv_kPa_mmhg = 7.50062;
 
 /* === Public data type definitions =============================================================*/
 
@@ -137,6 +138,16 @@ void app_main(void){
                 opcion_cursor--;
                 if (opcion_cursor < 0) opcion_cursor = MAX_OPCIONES;
             }
+            if (estado_actual == PANTALLA_MEDICION) {
+                estado_actual = PANTALLA_HISTERESIS;
+                hal_ssd1306_clear();
+            } else if (estado_actual == PANTALLA_HISTERESIS) {
+                estado_actual = PANTALLA_MEDICION;
+                hal_ssd1306_clear();
+            }
+            if (estado_actual == PANTALLA_DESINFLADO){
+                reiniciar_desinflado = true;
+            }
             if (estado_actual == PANTALLA_LIBERACION){
                 if (fase_liberacion == 0) {
                     presion_ajustada++;
@@ -162,6 +173,9 @@ void app_main(void){
                 }
                 hal_ssd1306_clear();
             }
+            if (estado_actual == PANTALLA_HISTERESIS){
+                iniciar_contador_histeresis = true;
+            }
             vTaskDelay(pdMS_TO_TICKS(150));
         }
 
@@ -179,6 +193,10 @@ void app_main(void){
                 hal_ssd1306_clear();;
             }
             if (estado_actual == PANTALLA_LIBERACION) {
+                estado_actual = PANTALLA_MENU;
+                hal_ssd1306_clear();
+            }
+            if (estado_actual == PANTALLA_HISTERESIS){
                 estado_actual = PANTALLA_MENU;
                 hal_ssd1306_clear();
             }
@@ -254,6 +272,7 @@ void app_main(void){
                 snprintf(texto_oled, sizeof(texto_oled), "Presion: %d mmHg", (int)presion_calibrada);    
                 hal_ssd1306_draw_string(0, 0, "MODO MEDICION");
                 hal_ssd1306_draw_string(0, 2, texto_oled);
+                hal_ssd1306_draw_string(0, 6, "[UP] -> HISTERESIS");
                 hal_ssd1306_draw_string(0, 7, "[BACK] -> salir");
                 hal_ssd1306_update();
                 break;
@@ -261,9 +280,39 @@ void app_main(void){
 
             case PANTALLA_DESINFLADO: {
                 hal_ssd1306_clear();
+                static const int32_t UMBRAL_ALTO  = 180;
+                static const int32_t UMBRAL_MEDIO = 120;
+                static const int32_t UMBRAL_BAJO  = 60;
+                static const int32_t PRESION_INFLADO_MIN = 250;
+
+                typedef enum {
+                    ETAPA_ESPERANDO_INFLADO,
+                    ETAPA_DESINFLANDO,
+                    ETAPA_COMPLETO
+                } etapa_desinflado_t;
+
+                static etapa_desinflado_t etapa = ETAPA_ESPERANDO_INFLADO;
+
                 static int64_t tiempo_anterior = 0;
-                static int64_t presion_mmHg_anterior = 0;
+                static int32_t presion_mmHg_anterior = 0;
                 static int64_t velocidad_mmHg_s = 0;
+
+                static bool cap_180_lista = false;
+                static bool cap_120_lista = false;
+                static bool cap_60_lista  = false;
+                static int64_t vel_180 = 0;
+                static int64_t vel_120 = 0;
+                static int64_t vel_60  = 0;
+
+                if (reiniciar_desinflado) {
+                    reiniciar_desinflado = false;
+                    etapa = ETAPA_ESPERANDO_INFLADO;
+                    cap_180_lista = cap_120_lista = cap_60_lista = false;
+                    vel_180 = vel_120 = vel_60 = 0;
+                    velocidad_mmHg_s = 0;
+                    tiempo_anterior = 0;
+                    presion_mmHg_anterior = 0;
+                }
 
                 int32_t promedio_presion = 0;
                 for (int i = 0; i < 16; i++) {
@@ -276,36 +325,81 @@ void app_main(void){
                     promedio_presion += muestra;
                 }
                 int32_t presion_mmHg_promediada = (promedio_presion / 16) + 7;
-                int32_t presion_calibrada = (int32_t)(((presion_mmHg_promediada - 6.46f) / 0.898f) + 0.5f); 
+                int32_t presion_calibrada = (int32_t)(((presion_mmHg_promediada - 6.46f) / 0.898f) + 0.5f);
                 if (presion_calibrada <= 198) {
                     presion_calibrada = (int32_t)((presion_calibrada * 1.0052f) + 1.89f);
                     if (presion_calibrada < 0) presion_calibrada = 0;
                 }
+
+                if (presion_calibrada >= PRESION_INFLADO_MIN &&
+                    (etapa == ETAPA_ESPERANDO_INFLADO || etapa == ETAPA_COMPLETO)) {
+                    etapa = ETAPA_DESINFLANDO;
+                    cap_180_lista = cap_120_lista = cap_60_lista = false;
+                    vel_180 = vel_120 = vel_60 = 0;
+                    presion_mmHg_anterior = presion_calibrada;
+                    tiempo_anterior = esp_timer_get_time();
+                }
+
                 int64_t tiempo_actual = esp_timer_get_time();
                 int64_t dt_us = tiempo_actual - tiempo_anterior;
-                if (dt_us >= 50000){
-                    int64_t delta_p = presion_calibrada - presion_mmHg_anterior;
+                if (etapa == ETAPA_DESINFLANDO && dt_us >= 50000) {
+                    int32_t presion_previa = presion_mmHg_anterior;
+                    int64_t delta_p = presion_calibrada - presion_previa;
+                    int64_t velocidad_cruda = (delta_p * 1000000) / dt_us;
+                    velocidad_mmHg_s = velocidad_cruda < 0 ? -velocidad_cruda : velocidad_cruda;
+
+                    if (!cap_180_lista && presion_previa > UMBRAL_ALTO && presion_calibrada <= UMBRAL_ALTO) {
+                        vel_180 = velocidad_mmHg_s;
+                        cap_180_lista = true;
+                    }
+                    if (!cap_120_lista && presion_previa > UMBRAL_MEDIO && presion_calibrada <= UMBRAL_MEDIO) {
+                        vel_120 = velocidad_mmHg_s;
+                        cap_120_lista = true;
+                    }
+                    if (!cap_60_lista && presion_previa > UMBRAL_BAJO && presion_calibrada <= UMBRAL_BAJO) {
+                        vel_60 = velocidad_mmHg_s;
+                        cap_60_lista = true;
+                    }
+
                     presion_mmHg_anterior = presion_calibrada;
                     tiempo_anterior = tiempo_actual;
-                    int64_t velocidad_cruda = (delta_p * 1000000) / dt_us;
 
-                    velocidad_mmHg_s = velocidad_cruda;
-                    if (velocidad_mmHg_s < 0){
-                        velocidad_mmHg_s = -velocidad_mmHg_s;
+                    if (cap_60_lista) {
+                        etapa = ETAPA_COMPLETO;
                     }
                 }
 
                 char texto_pres[32];
                 snprintf(texto_pres, sizeof(texto_pres), "Presion: %d mmHg", (int)presion_calibrada);
 
-                char texto_vel[32];
-                snprintf(texto_vel, sizeof(texto_vel), "Vel: %d mmHg/s", (int)velocidad_mmHg_s);
+                char texto_180[32], texto_120[32], texto_60[32];
+                if (cap_180_lista) snprintf(texto_180, sizeof(texto_180), "180: %d mmHg/s", (int)vel_180);
+                else               snprintf(texto_180, sizeof(texto_180), "180: ---");
+
+                if (cap_120_lista) snprintf(texto_120, sizeof(texto_120), "120: %d mmHg/s", (int)vel_120);
+                else               snprintf(texto_120, sizeof(texto_120), "120: ---");
+
+                if (cap_60_lista)  snprintf(texto_60, sizeof(texto_60), "60: %d mmHg/s", (int)vel_60);
+                else               snprintf(texto_60, sizeof(texto_60), "60: ---");
 
                 hal_ssd1306_draw_string(0, 0, "MODO DESINFLADO");
-                hal_ssd1306_draw_string(0, 2, texto_pres);
-                hal_ssd1306_draw_string(0, 4, texto_vel);
-                hal_ssd1306_draw_string(0, 7, "[BACK] -> Salir");
-                
+                if (etapa == ETAPA_ESPERANDO_INFLADO) {
+                    char texto_umbral[32];
+                    snprintf(texto_umbral, sizeof(texto_umbral), "Infle a %d mmHg", (int)PRESION_INFLADO_MIN);
+                    hal_ssd1306_draw_string(0, 2, texto_umbral);
+                    hal_ssd1306_draw_string(0, 4, texto_pres);
+                    hal_ssd1306_draw_string(0, 7, "[BACK] -> Salir");
+                } else {
+                    hal_ssd1306_draw_string(0, 2, texto_pres);
+                    hal_ssd1306_draw_string(0, 3, texto_180);
+                    hal_ssd1306_draw_string(0, 4, texto_120);
+                    hal_ssd1306_draw_string(0, 5, texto_60);
+                    if (etapa == ETAPA_COMPLETO) {
+                        hal_ssd1306_draw_string(0, 6, "Medicion completa");
+                        hal_ssd1306_draw_string(0, 7, "[UP] -> Reiniciar");
+                    }
+                }
+
                 hal_ssd1306_update();
                 break;
             }
@@ -447,6 +541,81 @@ void app_main(void){
                     fase_liberacion = 0;
                 }
 
+                break;
+            }
+
+            case PANTALLA_HISTERESIS: {
+                hal_ssd1306_clear();
+
+                static bool contador_activo = false;
+                static bool mostrando_fin = false;
+                static int64_t tiempo_inicio_contador_us = 0;
+                static int64_t tiempo_fin_contador_us = 0;
+                static int32_t segundos_restantes = 30;
+
+                if (iniciar_contador_histeresis) {
+                    iniciar_contador_histeresis = false;
+                    contador_activo = true;
+                    mostrando_fin = false;
+                    tiempo_inicio_contador_us = esp_timer_get_time();
+                    segundos_restantes = 30;
+                }
+
+                int32_t promedio_presion = 0;
+                for (int i = 0; i < 16; i++) {
+                    int tension_sensor_cal_mv = hal_adc_read_mv(&sensor_presion);
+                    int ref_mv = hal_adc_read_mv(&tension_ref);
+                    int32_t numerador = (7000 * tension_sensor_cal_mv) - (392 * ref_mv);
+                    int32_t denominador = 18 * ref_mv;
+                    int32_t muestra = numerador / denominador;
+                    if (muestra < 0) muestra = 0;
+                    promedio_presion += muestra;
+                }
+                int32_t presion_mmHg_promediada = (promedio_presion / 16) + 7;
+                int32_t presion_calibrada = (int32_t)(((presion_mmHg_promediada - 6.46f) / 0.898f) + 0.5f);
+                if (presion_calibrada <= 198) {
+                    presion_calibrada = (int32_t)((presion_calibrada * 1.0052f) + 1.89f);
+                    if (presion_calibrada < 0) presion_calibrada = 0;
+                }
+
+                if (contador_activo) {
+                    int64_t transcurrido_us = esp_timer_get_time() - tiempo_inicio_contador_us;
+                    int32_t transcurrido_s = (int32_t)(transcurrido_us / 1000000);
+                    segundos_restantes = 30 - transcurrido_s;
+                    if (segundos_restantes <= 0) {
+                        segundos_restantes = 0;
+                        contador_activo = false;
+                        mostrando_fin = true;
+                        tiempo_fin_contador_us = esp_timer_get_time();
+                    }
+                }
+
+                if (mostrando_fin) {
+                    int64_t desde_fin_us = esp_timer_get_time() - tiempo_fin_contador_us;
+                    if (desde_fin_us >= 1000000) {
+                        mostrando_fin = false;
+                    }
+                }
+
+                char texto_pres[32];
+                snprintf(texto_pres, sizeof(texto_pres), "Presion: %d mmHg", (int)presion_calibrada);
+
+                char texto_contador[32];
+                if (contador_activo) {
+                    snprintf(texto_contador, sizeof(texto_contador), "Tiempo: %d s", (int)segundos_restantes);
+                } else if (mostrando_fin) {
+                    snprintf(texto_contador, sizeof(texto_contador), "Tiempo: FIN");
+                } else {
+                    snprintf(texto_contador, sizeof(texto_contador), "[SET] -> Iniciar 30s");
+                }
+
+                hal_ssd1306_draw_string(0, 0, "MODO HISTERESIS");
+                hal_ssd1306_draw_string(0, 2, texto_pres);
+                hal_ssd1306_draw_string(0, 4, texto_contador);
+                hal_ssd1306_draw_string(0, 6, "[UP] -> Medicion");
+                hal_ssd1306_draw_string(0, 7, "[BACK] -> Salir");
+
+                hal_ssd1306_update();
                 break;
             }
 
