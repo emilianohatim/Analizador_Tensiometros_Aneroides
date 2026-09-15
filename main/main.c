@@ -46,16 +46,16 @@ SPDX-License-Identifier: MIT
 
 /* === Private data type definitions ========================================================== */
 
-hal_gpio_t boton_up = { .pin = 17, .direction = HAL_GPIO_DIR_INPUT};
-hal_gpio_t boton_down = { .pin = 5, .direction = HAL_GPIO_DIR_INPUT};
-hal_gpio_t boton_ok = { .pin = 18, .direction = HAL_GPIO_DIR_INPUT};
-hal_gpio_t boton_back = { .pin = 23, .direction = HAL_GPIO_DIR_INPUT};
+hal_gpio_t boton_up = { .pin = 34, .direction = HAL_GPIO_DIR_INPUT};
+hal_gpio_t boton_down = { .pin = 39, .direction = HAL_GPIO_DIR_INPUT};
+hal_gpio_t boton_ok = { .pin = 32, .direction = HAL_GPIO_DIR_INPUT};
+hal_gpio_t boton_back = { .pin = 33, .direction = HAL_GPIO_DIR_INPUT};
 
 hal_gpio_t oled_reset = { .pin = 16, .direction = HAL_GPIO_DIR_OUTPUT};
 
-hal_adc_t sensor_presion = { .unit = 1, .channel = 0};
-hal_adc_t tension_ref = { .unit = 1, .channel = 1};
-hal_adc_t nivel_bat = { .unit = 2, .channel = 5};
+hal_adc_t sensor_presion = { .unit = 2, .channel = 2};
+hal_adc_t tension_ref = { .unit = 2, .channel = 8};
+hal_adc_t nivel_bat = { .unit = 1, .channel = 7};
 
 typedef enum{
     PANTALLA_MENU,
@@ -102,7 +102,7 @@ void inicializar_hardware(void){
     hal_adc_init(&nivel_bat);
 
     //Inicialización de la comunicación y pantalla 
-    hal_i2c_init(4,15);
+    hal_i2c_init_oled(4,15);
     hal_ssd1306_init();
 }
 
@@ -284,6 +284,7 @@ void app_main(void){
                 static const int32_t UMBRAL_MEDIO = 120;
                 static const int32_t UMBRAL_BAJO  = 60;
                 static const int32_t PRESION_INFLADO_MIN = 250;
+                static const int32_t UMBRAL_RUIDO_MMHG = 2; // ajustá según cuánto salta tu ADC
 
                 typedef enum {
                     ETAPA_ESPERANDO_INFLADO,
@@ -342,31 +343,38 @@ void app_main(void){
 
                 int64_t tiempo_actual = esp_timer_get_time();
                 int64_t dt_us = tiempo_actual - tiempo_anterior;
+
                 if (etapa == ETAPA_DESINFLANDO && dt_us >= 50000) {
                     int32_t presion_previa = presion_mmHg_anterior;
                     int64_t delta_p = presion_calibrada - presion_previa;
-                    int64_t velocidad_cruda = (delta_p * 1000000) / dt_us;
-                    velocidad_mmHg_s = velocidad_cruda < 0 ? -velocidad_cruda : velocidad_cruda;
+                    int64_t delta_abs = delta_p < 0 ? -delta_p : delta_p;
 
-                    if (!cap_180_lista && presion_previa > UMBRAL_ALTO && presion_calibrada <= UMBRAL_ALTO) {
-                        vel_180 = velocidad_mmHg_s;
-                        cap_180_lista = true;
-                    }
-                    if (!cap_120_lista && presion_previa > UMBRAL_MEDIO && presion_calibrada <= UMBRAL_MEDIO) {
-                        vel_120 = velocidad_mmHg_s;
-                        cap_120_lista = true;
-                    }
-                    if (!cap_60_lista && presion_previa > UMBRAL_BAJO && presion_calibrada <= UMBRAL_BAJO) {
-                        vel_60 = velocidad_mmHg_s;
-                        cap_60_lista = true;
-                    }
+                    if (delta_abs >= UMBRAL_RUIDO_MMHG) {
+                        int64_t velocidad_cruda = (delta_p * 1000000) / dt_us;
+                        velocidad_mmHg_s = velocidad_cruda < 0 ? -velocidad_cruda : velocidad_cruda;
 
-                    presion_mmHg_anterior = presion_calibrada;
-                    tiempo_anterior = tiempo_actual;
+                        if (!cap_180_lista && presion_previa > UMBRAL_ALTO && presion_calibrada <= UMBRAL_ALTO) {
+                            vel_180 = velocidad_mmHg_s;
+                            cap_180_lista = true;
+                        }
+                        if (!cap_120_lista && presion_previa > UMBRAL_MEDIO && presion_calibrada <= UMBRAL_MEDIO) {
+                            vel_120 = velocidad_mmHg_s;
+                            cap_120_lista = true;
+                        }
+                        if (!cap_60_lista && presion_previa > UMBRAL_BAJO && presion_calibrada <= UMBRAL_BAJO) {
+                            vel_60 = velocidad_mmHg_s;
+                            cap_60_lista = true;
+                        }
 
-                    if (cap_60_lista) {
-                        etapa = ETAPA_COMPLETO;
+                        presion_mmHg_anterior = presion_calibrada;
+                        tiempo_anterior = tiempo_actual;
+
+                        if (cap_60_lista) {
+                            etapa = ETAPA_COMPLETO;
+                        }
                     }
+                    // si delta_abs < UMBRAL_RUIDO_MMHG: no tocamos presion_mmHg_anterior ni tiempo_anterior,
+                    // así el dt sigue acumulando hasta que haya un cambio real
                 }
 
                 char texto_pres[32];

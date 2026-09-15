@@ -42,8 +42,8 @@ SPDX-License-Identifier: MIT
 
 /* === Private variable definitions ============================================================ */
 
-static i2c_master_bus_handle_t bus_handle = NULL;
-static i2c_master_dev_handle_t oled_handle = NULL;
+static i2c_master_bus_handle_t bus_handle_oled = NULL;
+static i2c_master_bus_handle_t bus_handle_dac = NULL;
 
 /* === Public data type definitions =============================================================*/
 
@@ -51,7 +51,7 @@ static i2c_master_dev_handle_t oled_handle = NULL;
 
 /* === Private function definitions ============================================================ */
 
-void hal_i2c_init(uint8_t sda_pin, uint8_t scl_pin){
+void hal_i2c_init_oled(uint8_t sda_pin, uint8_t scl_pin){
     i2c_master_bus_config_t i2c_bus_config = {
         .clk_source = I2C_CLK_SRC_DEFAULT,
         .i2c_port = I2C_NUM_0,
@@ -60,19 +60,48 @@ void hal_i2c_init(uint8_t sda_pin, uint8_t scl_pin){
         .glitch_ignore_cnt = 7,
         .flags.enable_internal_pullup = true,
     };
-    i2c_new_master_bus(&i2c_bus_config, &bus_handle);
-
-    i2c_device_config_t dev_config = {
-        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
-        .device_address = 0x3C,
-        .scl_speed_hz = 400000,
-    };
-    i2c_master_bus_add_device(bus_handle, &dev_config, &oled_handle);
+    i2c_new_master_bus(&i2c_bus_config, &bus_handle_oled);
 }
 
-void hal_i2c_write(const uint8_t * data, size_t length){
-    if (oled_handle != NULL){
-        i2c_master_transmit(oled_handle, data, length, -1);
+void hal_i2c_init_dac(uint8_t sda_pin, uint8_t scl_pin){
+    i2c_master_bus_config_t i2c_bus_config = {
+        .clk_source = I2C_CLK_SRC_DEFAULT,
+        .i2c_port = I2C_NUM_1, 
+        .scl_io_num = scl_pin,
+        .sda_io_num = sda_pin,
+        .glitch_ignore_cnt = 7,
+        .flags.enable_internal_pullup = true,
+    };
+    i2c_new_master_bus(&i2c_bus_config, &bus_handle_dac);
+}
+
+void hal_i2c_add_device_oled(uint8_t dev_addr, i2c_master_dev_handle_t * dev_handle){
+    if (bus_handle_oled == NULL){
+        return;
+    }
+    i2c_device_config_t dev_config = {
+        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+        .device_address = dev_addr,
+        .scl_speed_hz = 400000,
+    };
+    i2c_master_bus_add_device(bus_handle_oled, &dev_config, dev_handle);
+}
+
+void hal_i2c_add_device_dac(uint8_t dev_addr, i2c_master_dev_handle_t * dev_handle){
+    if (bus_handle_dac == NULL) {
+        return;
+    }
+    i2c_device_config_t dev_config = {
+        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+        .device_address = dev_addr,
+        .scl_speed_hz = 10000, 
+    };
+    i2c_master_bus_add_device(bus_handle_dac, &dev_config, dev_handle);
+}
+
+void hal_i2c_write(i2c_master_dev_handle_t dev_hanlde, uint8_t * data, size_t length){
+    if (dev_hanlde != NULL){
+        i2c_master_transmit(dev_hanlde, data, length, -1);
     }
 }
 

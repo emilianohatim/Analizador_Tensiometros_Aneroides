@@ -45,6 +45,8 @@ SPDX-License-Identifier: MIT
 
 static uint8_t ssd1306_buffer[1024];
 
+static i2c_master_dev_handle_t oled_handle = NULL;
+
 static const uint8_t font5x7[][5] = {
     {0x00, 0x00, 0x00, 0x00, 0x00}, // Espacio (ASCII 32)
     {0x00, 0x00, 0x5F, 0x00, 0x00}, // ! (ASCII 33)
@@ -146,16 +148,19 @@ static const uint8_t font5x7[][5] = {
 /* === Private function definitions ============================================================ */
 
 void hal_ssd1306_init(void){
-    uint8_t init_cmds[] ={
-        0x00, /**< Comando */
-        0xAE, /**< Display OFF */
-        0x20, 0x00, /**< Modo de direccionamiento horizontal */
-        0x8D, 0x14, /**< Habilitar bomba de carga */
-        0xAf /**< Display ON */
-    };
-    hal_i2c_write(init_cmds, sizeof(init_cmds));
-    hal_ssd1306_clear();
-    hal_ssd1306_update();
+    hal_i2c_add_device_oled(0x3C, &oled_handle);
+    if (oled_handle != NULL){
+        uint8_t init_cmds[] ={
+            0x00, /**< Comando */
+            0xAE, /**< Display OFF */
+            0x20, 0x00, /**< Modo de direccionamiento horizontal */
+            0x8D, 0x14, /**< Habilitar bomba de carga */
+            0xAf /**< Display ON */
+        };
+        hal_i2c_write(oled_handle, init_cmds, sizeof(init_cmds));
+        hal_ssd1306_clear();
+        hal_ssd1306_update();
+    }
 }
 
 void hal_ssd1306_clear(void){
@@ -178,15 +183,44 @@ void hal_ssd1306_draw_string(uint8_t x, uint8_t page_y, const char * str){
     }
 }
 
+void hal_ssd1306_draw_pixel(uint8_t x, uint8_t y){
+    if (x >= 128 || y >= 64) return;
+    uint8_t page = y / 8;
+    uint8_t bit = y % 8;
+    ssd1306_buffer[(page * 128) + x] |= (1 << bit);
+}
+
+void hal_ssd1306_draw_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t h){
+    if (w == 0 || h == 0) return;
+    for (uint8_t dx = 0; dx < w; dx++){
+        hal_ssd1306_draw_pixel(x + dx, y);
+        hal_ssd1306_draw_pixel(x + dx, y + h - 1);
+    }
+    for (uint8_t dy = 0; dy < h; dy++){
+        hal_ssd1306_draw_pixel(x, y + dy);
+        hal_ssd1306_draw_pixel(x + w - 1, y + dy);
+    }
+}
+
+void hal_ssd1306_fill_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t h){
+    for (uint8_t dx = 0; dx < w; dx++){
+        for (uint8_t dy = 0; dy < h; dy++){
+            hal_ssd1306_draw_pixel(x + dx, y + dy);
+        }
+    }
+}
+
 void hal_ssd1306_update(void){
+    if (oled_handle == NULL) return;
+
     for (uint8_t page = 0; page < 8; page++){
         uint8_t cmd[] = {0x00, 0xB0 + page, 0x00, 0x10};
-        hal_i2c_write(cmd, sizeof(cmd));
+        hal_i2c_write(oled_handle, cmd, sizeof(cmd));
 
         uint8_t data[129];
         data[0] = 0x40;
         memcpy(&data[1], &ssd1306_buffer[page * 128], 128);
-        hal_i2c_write(data, sizeof(data));
+        hal_i2c_write(oled_handle, data, sizeof(data));
     }
 }
 

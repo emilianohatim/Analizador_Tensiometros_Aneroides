@@ -60,6 +60,15 @@ void hal_ssd1306_clear(void);
 
 void hal_ssd1306_draw_string(uint8_t x, uint8_t page_y, const char * str);
 
+/** @brief Enciende un pixel individual. x: 0-127, y: 0-63 (coordenada real, no pagina) */
+void hal_ssd1306_draw_pixel(uint8_t x, uint8_t y);
+
+/** @brief Dibuja el contorno (marco vacio) de un rectangulo */
+void hal_ssd1306_draw_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t h);
+
+/** @brief Rectangulo solido (relleno) */
+void hal_ssd1306_fill_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t h);
+
 void hal_ssd1306_update(void);
 
 /* === End of conditional blocks =================================================================================== */

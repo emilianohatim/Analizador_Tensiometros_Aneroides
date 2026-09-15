@@ -40,6 +40,7 @@ SPDX-License-Identifier: MIT
 
 #include <stdint.h>
 #include <stddef.h>
+#include "driver/i2c_master.h"
 
 /* === Header for C++ compatibility ================================================================================ */
 
@@ -55,9 +56,15 @@ extern "C" {
 
 /* === Public function declarations ================================================================================ */
 
-void hal_i2c_init(uint8_t sda_pin, uint8_t scl_pin);
+void hal_i2c_init_oled(uint8_t sda_pin, uint8_t scl_pin);
 
-void hal_i2c_write(const uint8_t * data, size_t length);
+void hal_i2c_init_dac(uint8_t sda_pin, uint8_t scl_pin);
+
+void hal_i2c_add_device_oled(uint8_t dev_addr, i2c_master_dev_handle_t * dev_handle);
+
+void hal_i2c_add_device_dac(uint8_t dev_addr, i2c_master_dev_handle_t * dev_handle);
+
+void hal_i2c_write(i2c_master_dev_handle_t dev_handle, uint8_t * data, size_t length);
 
 /* === End of conditional blocks =================================================================================== */
 
